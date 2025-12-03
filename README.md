@@ -1,8 +1,6 @@
 # Everything Indexer for Linux
 
-A powerful file search tool for Linux, inspired by Windows Everything, with a Matrix-style theme.
-
-![Matrix Theme](icon.png)
+✨ **The Linux search tool that remembers your unmounted drives!**
 
 ## Features
 
