@@ -1,0 +1,40 @@
+Usage
+Running the Application
+From application menu: Look for "Everything Indexer" in Utilities
+
+From terminal: everything-indexer
+
+First Time Setup
+Click "Index Drive" to select folders to index
+
+Wait for indexing to complete (progress in status bar)
+
+Start typing in the search box - results appear instantly!
+
+Search Syntax
+term - Search for files containing "term"
+
+term1|term2 - Search for files containing "term1" OR "term2"
+
+*.pdf - Search for all PDF files
+
+file!old - Search for files containing "file" but NOT "old"
+
+report?.doc - Search for report1.doc, report2.doc, etc.
+
+Keyboard Shortcuts
+F2 - Rename selected file
+
+Delete - Delete selected file (with confirmation)
+
+Ctrl+F - Focus search box
+
+Esc - Clear search
+
+F5 - Refresh search results
+
+Ctrl+Q - Quit application
+
+Enter - Open selected file
+
+Double-click - Open selected file

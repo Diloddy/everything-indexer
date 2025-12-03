@@ -1,0 +1,24 @@
+Application not showing in menu
+bash
+update-desktop-database ~/.local/share/applications
+# Then log out and log back in
+"Command not found" error
+Make sure ~/.local/bin is in your PATH:
+
+bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+Tkinter not installed
+Install Tkinter for your distribution:
+
+Ubuntu/Debian: sudo apt install python3-tk
+
+Fedora: sudo dnf install python3-tkinter
+
+Arch: sudo pacman -S tk
+
+License
+MIT License - Feel free to use and modify!
+
+
+

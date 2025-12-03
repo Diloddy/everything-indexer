@@ -1,0 +1,6 @@
+Requirements
+Python 3.6 or higher
+
+Tkinter (usually included with Python)
+
+Linux (tested on Ubuntu, Fedora, Arch)

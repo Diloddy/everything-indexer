@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wrapper script for Everything Indexer
+# This allows the app to be run from anywhere
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$SCRIPT_DIR/indexer.py" "$@"

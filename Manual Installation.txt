@@ -1,0 +1,16 @@
+# Make the script executable
+chmod +x everything-indexer
+
+# Copy to your local bin directory
+cp everything-indexer ~/.local/bin/
+
+# Copy the desktop file
+mkdir -p ~/.local/share/applications
+cp everything-indexer.desktop ~/.local/share/applications/
+
+# Copy the icon
+mkdir -p ~/.local/share/icons
+cp icon.png ~/.local/share/icons/everything-indexer.png
+
+# Update desktop database
+update-desktop-database ~/.local/share/applications

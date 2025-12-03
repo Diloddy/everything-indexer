@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Everything Indexer
+Comment=Search files like Everything for Windows - Matrix Theme
+Exec=everything-indexer
+Icon=everything-indexer
+Terminal=false
+Categories=Utility;FileTools;Office;
+StartupWMClass=EverythingIndexer
+Keywords=search;file;finder;everything;index
