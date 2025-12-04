@@ -14,6 +14,7 @@ from tkinter import ttk, filedialog, messagebox, Menu, Listbox, Scrollbar, simpl
 from datetime import datetime
 from threading import Thread
 import shutil
+import subprocess  # Added for clipboard operations
 
 
 # ==================== PLATFORM-INDEPENDENT PATHS ====================
@@ -88,6 +89,50 @@ def extract_drive_letter(path):
         return match.group(1).upper()
     
     return "Unknown"
+
+# ==================== CLIPBOARD FUNCTIONS (Universal) ====================
+def copy_to_clipboard(text):
+    """Copy text to clipboard using available methods on any OS"""
+    if not text:
+        return False
+    
+    try:
+        # Platform-specific clipboard handling
+        if sys.platform == "win32":
+            # Windows
+            import subprocess
+            subprocess.run(['clip'], input=text.encode('utf-16'), check=True, shell=True)
+            return True
+        elif sys.platform == "darwin":
+            # macOS
+            import subprocess
+            subprocess.run(['pbcopy'], input=text.encode('utf-8'), check=True)
+            return True
+        else:
+            # Linux and other Unix-like
+            try:
+                # Try using xclip (common on Linux)
+                subprocess.run(['xclip', '-selection', 'clipboard'], 
+                              input=text.encode(), check=True)
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                try:
+                    # Try using xsel (alternative on Linux)
+                    subprocess.run(['xsel', '--clipboard', '--input'], 
+                                  input=text.encode(), check=True)
+                    return True
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    # Last resort: tkinter clipboard
+                    import tkinter as tk
+                    root = tk.Tk()
+                    root.withdraw()
+                    root.clipboard_clear()
+                    root.clipboard_append(text)
+                    root.update()
+                    root.destroy()
+                    return True
+    except:
+        return False
 
 # ==================== DATABASE ====================
 def init_db():
@@ -515,18 +560,17 @@ class EverythingApp:
         scrollbar.grid(row=0, column=1, sticky=(tk.N, tk.S))
 
         # Bind keyboard shortcuts for file operations
-        self.tree.bind('<F2>', self.rename_selected_file)
+        self.tree.bind('<F2>', self.smart_rename_or_copy)  # CHANGED TO SMART FUNCTION
         self.tree.bind('<Delete>', self.delete_selected_file)
         self.tree.bind('<Control-d>', self.delete_selected_file)  # Ctrl+D alternative
         self.tree.bind('<Double-Button-1>', self.on_double_click)
         self.tree.bind('<Return>', self.on_double_click)
-        self.tree.bind('<Button-3>', self.show_context_menu)
         
-        # Add context menu items for rename and delete
+        # Context menu bindings
         self.tree.bind('<Button-3>', self.show_context_menu)
 
         self.status_var = tk.StringVar()
-        self.status_var.set("Ready. Type to search. F2=rename, Del=delete")
+        self.status_var.set("Ready. Type to search. F2=rename/copy, Del=delete")
         status = ttk.Label(root, textvariable=self.status_var,
                            relief=tk.SUNKEN, anchor=tk.W, 
                            font=('Monospace', self.font_size-2))
@@ -547,8 +591,10 @@ class EverythingApp:
         self.root.bind('<F5>', lambda e: self.refresh_all())
         self.root.bind('<Control-q>', lambda e: self.root.destroy())
         self.root.bind('<Control-Q>', lambda e: self.root.destroy())
-        self.root.bind('<Control-r>', lambda e: self.rename_selected_file())  # Ctrl+R for rename
-        self.root.bind('<Control-R>', lambda e: self.rename_selected_file())
+        self.root.bind('<Control-r>', lambda e: self.smart_rename_or_copy())  # Ctrl+R for rename/copy
+        self.root.bind('<Control-R>', lambda e: self.smart_rename_or_copy())
+        self.root.bind('<Control-c>', lambda e: self.copy_selected_path())  # Ctrl+C for copy
+        self.root.bind('<Control-C>', lambda e: self.copy_selected_path())
         
         init_db()
         self.refresh_all()
@@ -608,9 +654,13 @@ class EverythingApp:
         self.search_entry.focus()
         return "break"
 
-    # ==================== FILE OPERATIONS ====================
-    def rename_selected_file(self, event=None):
-        """Rename selected file with F2 key"""
+    # ==================== ENHANCED F2 FUNCTION ====================
+    def smart_rename_or_copy(self, event=None):
+        """
+        Smart F2 function:
+        - If file exists: rename it
+        - If file doesn't exist: copy filename to clipboard
+        """
         sel = self.tree.selection()
         if not sel:
             return
@@ -619,11 +669,18 @@ class EverythingApp:
         old_path = item['values'][4]
         old_name = item['values'][0]
         
+        # Check if file exists
         if not os.path.exists(old_path):
-            messagebox.showerror("Error", f"File not found:\n{old_path}")
+            # File doesn't exist - copy filename to clipboard
+            if copy_to_clipboard(old_name):
+                self.status_var.set(f"📋 Copied filename to clipboard: '{old_name}' (File not accessible)")
+            else:
+                messagebox.showinfo("Copy Filename", 
+                                   f"File not accessible.\nFilename: {old_name}\n\n"
+                                   f"You can manually copy this name.")
             return
         
-        # Ask for new name
+        # File exists - proceed with rename
         new_name = simpledialog.askstring("Rename File", 
                                          f"Rename '{old_name}' to:",
                                          initialvalue=old_name,
@@ -686,6 +743,95 @@ class EverythingApp:
         except Exception as e:
             messagebox.showerror("Rename Error", f"Unexpected error:\n{str(e)}")
 
+    # ==================== COPY TO CLIPBOARD FUNCTIONS ====================
+    def copy_selected_path(self, event=None):
+        """Copy selected file path to clipboard (Ctrl+C)"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        
+        item = self.tree.item(sel[0])
+        full_path = item['values'][4]
+        
+        if copy_to_clipboard(full_path):
+            self.status_var.set(f"📋 Copied path to clipboard: {full_path}")
+        else:
+            messagebox.showinfo("Copy Path", 
+                               f"Path copied to clipboard:\n{full_path}")
+
+    def copy_filename_only(self):
+        """Copy only the filename (without path)"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        
+        item = self.tree.item(sel[0])
+        filename = item['values'][0]
+        
+        if copy_to_clipboard(filename):
+            self.status_var.set(f"📋 Copied filename: {filename}")
+        else:
+            messagebox.showinfo("Copy Filename", 
+                               f"Filename copied to clipboard:\n{filename}")
+
+    def copy_file_path(self):
+        """Copy full file path"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        
+        item = self.tree.item(sel[0])
+        full_path = item['values'][4]
+        
+        if copy_to_clipboard(full_path):
+            self.status_var.set(f"📋 Copied path: {full_path}")
+        else:
+            messagebox.showinfo("Copy Path", 
+                               f"Path copied to clipboard:\n{full_path}")
+
+    # ==================== FIXED EXPORT CSV FUNCTION ====================
+    def export_csv(self):
+        """Export search results to CSV file - FIXED VERSION"""
+        term = self.search_var.get().strip()
+        results = search_files(term, limit=1000000)
+        
+        if not results:
+            messagebox.showwarning("No Data", "Nothing to export.")
+            return
+        
+        # Ask for filename
+        default_name = f"search_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            initialfile=default_name,
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        
+        if not filename:
+            return  # User cancelled
+        
+        try:
+            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Name', 'Size (bytes)', 'Type', 'Drive', 'Path'])
+                
+                for row in results:
+                    name, size, ftype, full_path = row
+                    drive_letter = extract_drive_letter(full_path)
+                    writer.writerow([name, size, ftype, drive_letter, full_path])
+            
+            # Show success message
+            self.status_var.set(f"✅ Exported {len(results)} rows to {os.path.basename(filename)}")
+            messagebox.showinfo("Export Successful", 
+                              f"Successfully exported {len(results)} rows to:\n{filename}")
+            
+        except PermissionError:
+            messagebox.showerror("Permission Error", 
+                               f"Cannot write to:\n{filename}\n\n"
+                               "Make sure you have write permissions.")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Error exporting CSV:\n{str(e)}")
+
     def delete_selected_file(self, event=None):
         """Delete selected file with Delete key (permanently)"""
         sel = self.tree.selection()
@@ -712,24 +858,60 @@ class EverythingApp:
                 os.remove(file_path)
                 action = "Permanently deleted"
             elif response == "trash":
-                # Try to move to trash (Linux)
-                try:
-                    # Try using gio trash command (GNOME)
-                    import subprocess
-                    subprocess.run(['gio', 'trash', file_path], check=True)
-                    action = "Moved to trash"
-                except:
-                    # Fallback to rename to .trash folder
-                    trash_dir = os.path.expanduser('~/.local/share/Trash/files')
-                    os.makedirs(trash_dir, exist_ok=True)
-                    trash_path = os.path.join(trash_dir, os.path.basename(file_path))
-                    counter = 1
-                    while os.path.exists(trash_path):
-                        name, ext = os.path.splitext(os.path.basename(file_path))
-                        trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
-                        counter += 1
-                    shutil.move(file_path, trash_path)
-                    action = "Moved to trash"
+                # Try to move to trash
+                if sys.platform == "win32":
+                    # Windows: Use send2trash if available, otherwise delete
+                    try:
+                        import send2trash
+                        send2trash.send2trash(file_path)
+                        action = "Moved to Recycle Bin"
+                    except ImportError:
+                        # Create a custom trash folder for Windows
+                        trash_dir = os.path.join(APP_DATA_DIR, "Trash")
+                        os.makedirs(trash_dir, exist_ok=True)
+                        trash_path = os.path.join(trash_dir, os.path.basename(file_path))
+                        counter = 1
+                        while os.path.exists(trash_path):
+                            name, ext = os.path.splitext(os.path.basename(file_path))
+                            trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
+                            counter += 1
+                        shutil.move(file_path, trash_path)
+                        action = "Moved to trash"
+                elif sys.platform == "darwin":
+                    # macOS: Use AppleScript to move to trash
+                    try:
+                        import subprocess
+                        subprocess.run(['osascript', '-e', f'tell app "Finder" to delete POSIX file "{file_path}"'], check=True)
+                        action = "Moved to Trash"
+                    except:
+                        # Fallback for macOS
+                        trash_dir = os.path.expanduser('~/.Trash')
+                        os.makedirs(trash_dir, exist_ok=True)
+                        trash_path = os.path.join(trash_dir, os.path.basename(file_path))
+                        counter = 1
+                        while os.path.exists(trash_path):
+                            name, ext = os.path.splitext(os.path.basename(file_path))
+                            trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
+                            counter += 1
+                        shutil.move(file_path, trash_path)
+                        action = "Moved to trash"
+                else:
+                    # Linux: Try gio trash, then fallback
+                    try:
+                        subprocess.run(['gio', 'trash', file_path], check=True)
+                        action = "Moved to trash"
+                    except:
+                        # Fallback to rename to .trash folder
+                        trash_dir = os.path.expanduser('~/.local/share/Trash/files')
+                        os.makedirs(trash_dir, exist_ok=True)
+                        trash_path = os.path.join(trash_dir, os.path.basename(file_path))
+                        counter = 1
+                        while os.path.exists(trash_path):
+                            name, ext = os.path.splitext(os.path.basename(file_path))
+                            trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
+                            counter += 1
+                        shutil.move(file_path, trash_path)
+                        action = "Moved to trash"
             
             # Update database - remove the file entry
             conn = sqlite3.connect(DB_PATH)
@@ -984,27 +1166,6 @@ class EverythingApp:
                   bg='#0A0A0A', fg='#00FF00',
                   activebackground='#003300', activeforeground='#00FF00').pack(side=tk.LEFT, padx=5)
 
-    def export_csv(self):
-        term = self.search_var.get().strip()
-        results = search_files(term, limit=None)
-        if not results:
-            messagebox.showwarning("No Data", "Nothing to export.")
-            return
-        filename = filedialog.asksaveasfilename(defaultextension=".csv",
-                                                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
-        if filename:
-            try:
-                with open(filename, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['Name', 'Size (bytes)', 'Type', 'Drive', 'Path'])
-                    for row in results:
-                        name, size, ftype, full_path = row
-                        drive_letter = extract_drive_letter(full_path)
-                        writer.writerow([name, size, ftype, drive_letter, full_path])
-                messagebox.showinfo("Export Successful", f"Exported {len(results)} rows to\n{filename}")
-            except Exception as e:
-                messagebox.showerror("Export Error", str(e))
-
     def clear_all_indexes(self):
         if messagebox.askyesno("Clear All Indexes",
                                "This will delete ALL indexed files and folders.\n"
@@ -1039,7 +1200,9 @@ class EverythingApp:
                 messagebox.showinfo("File Not Found",
                                     f"File not found: {full_path}")
 
+    # ==================== ENHANCED CONTEXT MENU ====================
     def show_context_menu(self, event):
+        """Show enhanced context menu with copy/cut options"""
         sel = self.tree.selection()
         if not sel:
             return
@@ -1052,11 +1215,27 @@ class EverythingApp:
         menu.add_command(label="Open", command=self.open_selected)
         menu.add_separator()
         
-        # Add Rename and Delete to context menu
-        menu.add_command(label="Rename (F2)", command=lambda: self.rename_selected_file())
+        # Copy options
+        copy_menu = Menu(menu, tearoff=0,
+                        font=('Monospace', self.font_size-3),
+                        bg='#0A0A0A', fg='#00FF00',
+                        activebackground='#003300', activeforeground='#00FF00')
+        copy_menu.add_command(label="Copy Filename", command=self.copy_filename_only)
+        copy_menu.add_command(label="Copy Full Path", command=self.copy_file_path)
+        menu.add_cascade(label="Copy", menu=copy_menu)
+        
+        # Cut functionality (similar to delete but first copies path)
+        menu.add_command(label="Cut (Move to Trash)", 
+                        command=lambda: self.cut_to_trash())
+        
+        menu.add_separator()
+        
+        # Rename and Delete
+        menu.add_command(label="Rename (F2)", command=lambda: self.smart_rename_or_copy())
         menu.add_command(label="Delete (Del)", command=lambda: self.delete_selected_file())
         menu.add_separator()
         
+        # Rescan options
         menu.add_command(label="Rescan This Folder", command=self.rescan_folder)
         menu.add_command(label="Rescan This Folder with Cleanup", command=self.rescan_cleanup)
         menu.add_command(label="Rescan Entire Drive", command=self.rescan_entire_drive)
@@ -1064,7 +1243,92 @@ class EverythingApp:
         menu.add_separator()
         menu.add_command(label="Exclude This Folder", command=self.exclude_this_folder)
         menu.add_command(label="Exclude Subfolder...", command=self.exclude_subfolder)
+        
         menu.tk_popup(event.x_root, event.y_root)
+
+    def cut_to_trash(self):
+        """Cut file (copy path to clipboard, then move to trash)"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        
+        item = self.tree.item(sel[0])
+        file_path = item['values'][4]
+        file_name = item['values'][0]
+        
+        # First copy the path to clipboard
+        copy_to_clipboard(file_path)
+        
+        # Then move to trash
+        if not os.path.exists(file_path):
+            messagebox.showerror("Error", f"File not found:\n{file_path}")
+            return
+        
+        response = messagebox.askyesno("Cut to Trash", 
+                                      f"Cut '{file_name}'?\n\n"
+                                      f"Path copied to clipboard.\n"
+                                      f"File will be moved to trash.")
+        
+        if not response:
+            return
+        
+        try:
+            # Platform-specific trash handling
+            if sys.platform == "win32":
+                try:
+                    import send2trash
+                    send2trash.send2trash(file_path)
+                except ImportError:
+                    trash_dir = os.path.join(APP_DATA_DIR, "Trash")
+                    os.makedirs(trash_dir, exist_ok=True)
+                    trash_path = os.path.join(trash_dir, os.path.basename(file_path))
+                    counter = 1
+                    while os.path.exists(trash_path):
+                        name, ext = os.path.splitext(os.path.basename(file_path))
+                        trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
+                        counter += 1
+                    shutil.move(file_path, trash_path)
+            elif sys.platform == "darwin":
+                try:
+                    subprocess.run(['osascript', '-e', f'tell app "Finder" to delete POSIX file "{file_path}"'], check=True)
+                except:
+                    trash_dir = os.path.expanduser('~/.Trash')
+                    os.makedirs(trash_dir, exist_ok=True)
+                    trash_path = os.path.join(trash_dir, os.path.basename(file_path))
+                    counter = 1
+                    while os.path.exists(trash_path):
+                        name, ext = os.path.splitext(os.path.basename(file_path))
+                        trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
+                        counter += 1
+                    shutil.move(file_path, trash_path)
+            else:
+                # Linux
+                try:
+                    subprocess.run(['gio', 'trash', file_path], check=True)
+                except:
+                    trash_dir = os.path.expanduser('~/.local/share/Trash/files')
+                    os.makedirs(trash_dir, exist_ok=True)
+                    trash_path = os.path.join(trash_dir, os.path.basename(file_path))
+                    counter = 1
+                    while os.path.exists(trash_path):
+                        name, ext = os.path.splitext(os.path.basename(file_path))
+                        trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
+                        counter += 1
+                    shutil.move(file_path, trash_path)
+            
+            # Update database - remove the file entry
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("DELETE FROM files WHERE path = ?", (file_path,))
+            conn.commit()
+            conn.close()
+            
+            # Remove from treeview
+            self.tree.delete(sel[0])
+            self.status_var.set(f"Cut to trash: {file_name}")
+            
+        except Exception as e:
+            messagebox.showerror("Cut Error", f"Could not move to trash:\n{str(e)}")
 
     def rescan_folder(self):
         sel = self.tree.selection()
