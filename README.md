@@ -1,6 +1,7 @@
 # Everything Indexer for Linux
 
 ✨ **The Linux search tool that remembers your unmounted drives!**
+<img width="1492" height="877" alt="image" src="https://github.com/user-attachments/assets/618f08bb-ccbd-4321-8608-e8b8eb08186d" />
 
 ## ✨ New Features
 - **Smart F2**: Copies filename when file is inaccessible, renames when accessible
