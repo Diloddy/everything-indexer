@@ -2,6 +2,23 @@
 
 ✨ **The Linux search tool that remembers your unmounted drives!**
 
+## ✨ New Features
+- **Smart F2**: Copies filename when file is inaccessible, renames when accessible
+- **Fixed CSV Export**: Now works correctly with search filters
+- **Enhanced Context Menu**: Right-click for Copy (filename/path) and Cut options
+- **Cross-platform**: Works on Windows, macOS, and Linux
+- **No dependencies**: No external Python packages needed
+
+## ⌨️ Keyboard Shortcuts
+- **F2**: Smart rename/copy
+- **Ctrl+C**: Copy selected file path
+- **Del**: Delete selected file
+- **Ctrl+R**: Rename
+- **Ctrl+F**: Focus search box
+- **F5**: Refresh
+- **Esc**: Clear sear
+
+
 ## Features
 
 - **Lightning-fast file search** - Instant results as you type
@@ -21,3 +38,11 @@
 3. Run the install script:
    ```bash
    ./install.sh
+
+
+
+
+
+
+   fast-search instant-search local-search offline-search desktop-search
+file-manager file-organizer file-explorer file-finder
