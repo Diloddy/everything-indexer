@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Everything‑like Indexer for Linux – Clean Working Version.
-Matrix Style: 80% transparent black with green accents.
+Now with BULK DELETE and OPEN CONTAINING FOLDER
 """
 import os
 import re
@@ -515,28 +515,41 @@ class EverythingApp:
         self.search_entry = ttk.Entry(frame_search, textvariable=self.search_var,
                                       width=45, font=('Monospace', self.font_size))
         self.search_entry.grid(row=0, column=1, padx=10)
+        # ADDED: Bind right-click to show context menu for paste
+        self.search_entry.bind('<Button-3>', self.show_search_context_menu)  # Button-3 is right-click on Linux
         self.search_var.trace('w', self.on_search_change)
         self.search_entry.focus_set()
 
         btn_frame = ttk.Frame(frame_search)
         btn_frame.grid(row=0, column=2, padx=15)
-        ttk.Button(btn_frame, text="Index Drive", style='Green.TButton',
-                   command=self.index_drive).pack(side=tk.LEFT, padx=3, pady=2)
-        ttk.Button(btn_frame, text="Exclude Folder", style='Red.TButton',
-                   command=self.exclude_folder).pack(side=tk.LEFT, padx=3, pady=2)
-        ttk.Button(btn_frame, text="Manage Exclusions", style='Blue.TButton',
-                   command=self.manage_exclusions).pack(side=tk.LEFT, padx=3, pady=2)
-        ttk.Button(btn_frame, text="Export CSV", style='Orange.TButton',
-                   command=self.export_csv).pack(side=tk.LEFT, padx=3, pady=2)
-        ttk.Button(btn_frame, text="Clear All", style='Purple.TButton',
-                   command=self.clear_all_indexes).pack(side=tk.LEFT, padx=3, pady=2)
+        
+        # Store button references for Tab navigation
+        self.btn_index = ttk.Button(btn_frame, text="Index Drive", style='Green.TButton',
+                   command=self.index_drive)
+        self.btn_index.pack(side=tk.LEFT, padx=3, pady=2)
+        
+        self.btn_exclude = ttk.Button(btn_frame, text="Exclude Folder", style='Red.TButton',
+                   command=self.exclude_folder)
+        self.btn_exclude.pack(side=tk.LEFT, padx=3, pady=2)
+        
+        self.btn_manage = ttk.Button(btn_frame, text="Manage Exclusions", style='Blue.TButton',
+                   command=self.manage_exclusions)
+        self.btn_manage.pack(side=tk.LEFT, padx=3, pady=2)
+        
+        self.btn_export = ttk.Button(btn_frame, text="Export CSV", style='Orange.TButton',
+                   command=self.export_csv)
+        self.btn_export.pack(side=tk.LEFT, padx=3, pady=2)
+        
+        self.btn_clear = ttk.Button(btn_frame, text="Clear All", style='Purple.TButton',
+                   command=self.clear_all_indexes)
+        self.btn_clear.pack(side=tk.LEFT, padx=3, pady=2)
 
         frame_results = ttk.Frame(root, padding="15")
         frame_results.grid(row=1, column=0, sticky=(tk.N, tk.S, tk.W, tk.E))
 
         self.columns = ('Name', 'Size', 'Type', 'Drive', 'Path')
         self.tree = ttk.Treeview(frame_results, columns=self.columns,
-                                 show='headings', height=28)
+                                 show='headings', height=28, takefocus=1)
         
         self.tree.heading('Name', text='Name', anchor=tk.W, command=lambda: self.sort_by_column('Name'))
         self.tree.heading('Size', text='Size', anchor=tk.W, command=lambda: self.sort_by_column('Size'))
@@ -553,6 +566,9 @@ class EverythingApp:
         # Load saved column widths
         self.load_column_widths()
         
+        # NEW: Enable multiple selection in treeview
+        self.tree.configure(selectmode='extended')  # Allows Ctrl+Click, Shift+Click
+        
         scrollbar = ttk.Scrollbar(frame_results, orient=tk.VERTICAL,
                                   command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -568,9 +584,33 @@ class EverythingApp:
         
         # Context menu bindings
         self.tree.bind('<Button-3>', self.show_context_menu)
-
+        self.tree.bind('<ButtonRelease-1>', lambda e: self.tree.focus_set())
+        
+        # ==================== NEW: KEYBOARD SELECTION BINDINGS ====================
+        # Shift+Arrow for selection
+        self.tree.bind('<Shift-Up>', self.on_shift_arrow)
+        self.tree.bind('<Shift-Down>', self.on_shift_arrow)
+        self.tree.bind('<Shift-Home>', self.on_shift_home)
+        self.tree.bind('<Shift-End>', self.on_shift_end)
+        
+        # Space for toggle selection
+        self.tree.bind('<space>', self.on_space_selection)
+        
+        # Ctrl+A for select all
+        self.tree.bind('<Control-a>', self.on_ctrl_a)
+        self.tree.bind('<Control-A>', self.on_ctrl_a)
+        
+        # ==================== NEW: TAB NAVIGATION BINDINGS ====================
+        self.search_entry.bind('<Tab>', self.on_search_tab)
+        self.btn_clear.bind('<Tab>', self.on_clear_tab)
+        
+        # Set initial focus chain manually
+        self.search_entry.bind('<FocusIn>', lambda e: self.set_focus_chain("search"))
+        self.tree.bind('<FocusIn>', lambda e: self.set_focus_chain("tree"))
+        self.btn_index.bind('<FocusIn>', lambda e: self.set_focus_chain("button"))
+        
         self.status_var = tk.StringVar()
-        self.status_var.set("Ready. Type to search. F2=rename/copy, Del=delete")
+        self.status_var.set("Ready. Type to search. F2=rename/copy, Del=delete, Ctrl+Click=multi-select")
         status = ttk.Label(root, textvariable=self.status_var,
                            relief=tk.SUNKEN, anchor=tk.W, 
                            font=('Monospace', self.font_size-2))
@@ -597,7 +637,510 @@ class EverythingApp:
         self.root.bind('<Control-C>', lambda e: self.copy_selected_path())
         
         init_db()
+        self.root.after(100, lambda: self.tree.focus_set())
         self.refresh_all()
+    
+    # ==================== NEW: TAB NAVIGATION METHODS ====================
+    def on_search_tab(self, event):
+        """Handle Tab from search bar"""
+        if event.state & 0x0001:  # Shift+Tab (go backward)
+            # Shift+Tab from search should go to treeview if it has items
+            if self.tree.get_children():
+                self.tree.focus_set()
+                if not self.tree.selection():
+                    first_item = self.tree.get_children()[0]
+                    self.tree.selection_set(first_item)
+                    self.tree.focus(first_item)
+            return "break"
+        else:
+            # Regular Tab from search goes to first button
+            self.btn_index.focus_set()
+            return "break"
+    
+    def on_clear_tab(self, event):
+        """Handle Tab from Clear All button"""
+        if event.state & 0x0001:  # Shift+Tab (go backward)
+            # Shift+Tab from Clear All goes to Export CSV button
+            self.btn_export.focus_set()
+            return "break"
+        else:
+            # Regular Tab from Clear All goes to treeview if it has items
+            if self.tree.get_children():
+                self.tree.focus_set()
+                if not self.tree.selection():
+                    first_item = self.tree.get_children()[0]
+                    self.tree.selection_set(first_item)
+                    self.tree.focus(first_item)
+            return "break"
+    
+    def set_focus_chain(self, widget_type):
+        """Manually set focus chain based on which widget has focus"""
+        if widget_type == "search":
+            # From search, Tab goes to Index Drive button
+            self.search_entry.tk_focusNext = lambda: self.btn_index
+        elif widget_type == "tree":
+            # From treeview, Tab goes to Clear All button
+            self.tree.tk_focusNext = lambda: self.btn_clear
+        elif widget_type == "button":
+            # From any button, figure out which one
+            focus = self.root.focus_get()
+            if focus == self.btn_clear:
+                self.btn_clear.tk_focusNext = lambda: self.tree if self.tree.get_children() else self.search_entry
+            elif focus == self.btn_export:
+                self.btn_export.tk_focusNext = lambda: self.btn_clear
+            elif focus == self.btn_manage:
+                self.btn_manage.tk_focusNext = lambda: self.btn_export
+            elif focus == self.btn_exclude:
+                self.btn_exclude.tk_focusNext = lambda: self.btn_manage
+            elif focus == self.btn_index:
+                self.btn_index.tk_focusNext = lambda: self.btn_exclude
+    
+    # ==================== NEW: KEYBOARD SELECTION METHODS ====================
+    def on_shift_arrow(self, event):
+        """Handle Shift+Up/Down for selection"""
+        sel = self.tree.selection()
+        focus = self.tree.focus()
+        
+        if not focus:
+            # No focus, start with first item
+            items = self.tree.get_children()
+            if items:
+                first_item = items[0]
+                self.tree.selection_set(first_item)
+                self.tree.focus(first_item)
+            return "break"
+        
+        items = self.tree.get_children()
+        if not items:
+            return "break"
+        
+        try:
+            current_index = items.index(focus)
+        except ValueError:
+            return "break"
+        
+        if event.keysym == 'Up' and current_index > 0:
+            new_index = current_index - 1
+        elif event.keysym == 'Down' and current_index < len(items) - 1:
+            new_index = current_index + 1
+        else:
+            return "break"
+        
+        new_item = items[new_index]
+        
+        # Get current selection
+        current_selection = set(sel)
+        
+        # Toggle the new item in selection
+        if new_item in current_selection:
+            current_selection.remove(new_item)
+        else:
+            current_selection.add(new_item)
+        
+        # Update selection
+        self.tree.selection_set(list(current_selection))
+        self.tree.focus(new_item)
+        
+        # Ensure item is visible
+        self.tree.see(new_item)
+        
+        return "break"
+    
+    def on_shift_home(self, event):
+        """Handle Shift+Home to select to top"""
+        items = self.tree.get_children()
+        if not items:
+            return "break"
+        
+        focus = self.tree.focus()
+        if not focus:
+            focus = items[0] if items else None
+        
+        if focus:
+            current_index = items.index(focus)
+            # Select from current to first
+            selection_range = items[:current_index + 1]
+            self.tree.selection_set(selection_range)
+            self.tree.focus(items[0])
+            self.tree.see(items[0])
+        
+        return "break"
+    
+    def on_shift_end(self, event):
+        """Handle Shift+End to select to bottom"""
+        items = self.tree.get_children()
+        if not items:
+            return "break"
+        
+        focus = self.tree.focus()
+        if not focus:
+            focus = items[0] if items else None
+        
+        if focus:
+            current_index = items.index(focus)
+            # Select from current to last
+            selection_range = items[current_index:]
+            self.tree.selection_set(selection_range)
+            self.tree.focus(items[-1])
+            self.tree.see(items[-1])
+        
+        return "break"
+    
+    def on_space_selection(self, event):
+        """Handle Space bar to toggle selection"""
+        focus = self.tree.focus()
+        if not focus:
+            return "break"
+        
+        sel = list(self.tree.selection())
+        
+        if focus in sel:
+            # Remove from selection
+            sel.remove(focus)
+        else:
+            # Add to selection
+            sel.append(focus)
+        
+        self.tree.selection_set(sel)
+        return "break"
+    
+    def on_ctrl_a(self, event):
+        """Handle Ctrl+A to select all"""
+        items = self.tree.get_children()
+        if items:
+            self.tree.selection_set(items)
+        return "break"
+
+    # ==================== NEW: RIGHT-CLICK PASTE FOR SEARCH BAR ====================
+    def show_search_context_menu(self, event):
+        """Show context menu for search entry with paste option"""
+        menu = Menu(self.root, tearoff=0,
+                   font=('Monospace', self.font_size-2),
+                   bg='#0A0A0A', fg='#00FF00',
+                   activebackground='#003300', activeforeground='#00FF00')
+        
+        # Add paste option
+        menu.add_command(label="Paste", command=lambda: self.paste_into_search())
+        
+        # Show the menu at cursor position
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def paste_into_search(self):
+        """Paste clipboard content into search bar, replacing selection if any"""
+        try:
+            # Get clipboard content using tkinter
+            import tkinter as tk
+            root = tk.Tk()
+            root.withdraw()
+            
+            try:
+                clipboard_content = root.clipboard_get()
+            except tk.TclError:
+                # Clipboard might be empty or contain non-text data
+                clipboard_content = ""
+            
+            root.destroy()
+            
+            if clipboard_content:
+                # Get current selection range
+                try:
+                    sel_start = self.search_entry.index(tk.SEL_FIRST)
+                    sel_end = self.search_entry.index(tk.SEL_LAST)
+                    
+                    # Delete selected text and insert clipboard content
+                    self.search_entry.delete(sel_start, sel_end)
+                    self.search_entry.insert(sel_start, clipboard_content)
+                    
+                    # Set cursor position after pasted text
+                    self.search_entry.icursor(sel_start + len(clipboard_content))
+                except tk.TclError:
+                    # No selection - insert at cursor position
+                    cursor_pos = self.search_entry.index(tk.INSERT)
+                    self.search_entry.insert(cursor_pos, clipboard_content)
+        except Exception as e:
+            # Fallback to empty paste (silent fail)
+            pass
+
+    # ==================== NEW: OPEN CONTAINING FOLDER ====================
+    def open_containing_folder(self):
+        """Open the parent folder of selected file(s) in file manager"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        
+        # Get unique parent folders from all selected items
+        folders_to_open = set()
+        
+        for item in sel:
+            item_data = self.tree.item(item)
+            file_path = item_data['values'][4]
+            if file_path:
+                parent_folder = os.path.dirname(file_path)
+                if os.path.exists(parent_folder):
+                    folders_to_open.add(parent_folder)
+        
+        if not folders_to_open:
+            messagebox.showinfo("No Valid Folders", 
+                              "Could not find parent folders for selected items.")
+            return
+        
+        # Open each unique parent folder
+        for folder in folders_to_open:
+            try:
+                os.system(f'xdg-open "{folder}"')
+            except Exception as e:
+                self.status_var.set(f"Error opening folder: {folder}")
+        
+        # Update status
+        if len(folders_to_open) == 1:
+            self.status_var.set(f"Opened folder: {list(folders_to_open)[0]}")
+        else:
+            self.status_var.set(f"Opened {len(folders_to_open)} folders")
+
+    # ==================== FIXED: BULK DELETE FUNCTION WITH UNMOUNTED DRIVE PROTECTION ====================
+    def delete_selected_file(self, event=None):
+        """Delete selected file(s) with Delete key - NOW WITH UNMOUNTED DRIVE PROTECTION"""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        
+        # Collect all selected files
+        files_to_delete = []
+        files_to_skip = []  # Files on unmounted drives
+        
+        for item in sel:
+            item_data = self.tree.item(item)
+            file_path = item_data['values'][4]
+            file_name = item_data['values'][0]
+            
+            # Check if file exists
+            if os.path.exists(file_path):
+                files_to_delete.append((file_path, file_name, item))
+            else:
+                # File doesn't exist - check if drive might be unmounted
+                # Extract the mount point (like /media/user/M)
+                path_parts = file_path.split('/')
+                
+                # Check if this looks like a mounted drive path
+                is_mounted_drive_path = False
+                if len(path_parts) >= 4 and path_parts[:2] == ['', 'media']:
+                    # Format: /media/username/drive/...
+                    mount_point = '/'.join(path_parts[:4])
+                    is_mounted_drive_path = True
+                elif len(path_parts) >= 3 and path_parts[:2] == ['', 'mnt']:
+                    # Format: /mnt/drive/...
+                    mount_point = '/'.join(path_parts[:3])
+                    is_mounted_drive_path = True
+                else:
+                    mount_point = None
+                
+                if is_mounted_drive_path:
+                    # This is a mounted drive path - ask user
+                    files_to_skip.append((file_path, file_name, mount_point))
+                else:
+                    # Regular missing file - remove from database
+                    self.tree.delete(item)
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    c.execute("DELETE FROM files WHERE path = ?", (file_path,))
+                    conn.commit()
+                    conn.close()
+
+        # Handle files on unmounted drives
+        if files_to_skip:
+            skip_count = len(files_to_skip)
+            mount_points = set(mp for _, _, mp in files_to_skip)
+            
+            response = messagebox.askyesno(
+                "Drive Unmounted",
+                f"{skip_count} files appear to be on unmounted drive(s):\n"
+                f"{', '.join(mount_points)}\n\n"
+                f"Click YES to REMOVE them from database\n"
+                f"Click NO to KEEP them in database (Recommended)"
+            )
+            
+            # FIXED LOGIC: Yes = Remove, No = Skip
+            if not response:  # User clicked "No" = Keep in database (recommended)
+                self.status_var.set(f"Skipped {skip_count} files on unmounted drives")
+                # Do nothing - leave them in database
+            else:  # User clicked "Yes" = Remove from database
+                for file_path, file_name, _ in files_to_skip:
+                    # Remove from treeview and database
+                    for item in sel:
+                        if self.tree.item(item)['values'][4] == file_path:
+                            self.tree.delete(item)
+                            break
+                    
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    c.execute("DELETE FROM files WHERE path = ?", (file_path,))
+                    conn.commit()
+                    conn.close()
+                
+                self.status_var.set(f"Removed {skip_count} files from database (drive unmounted)")
+            
+            # Continue with remaining files
+            if not files_to_delete:
+                return
+        
+        # Show confirmation dialog with file list
+        response = self.show_bulk_delete_confirmation(files_to_delete)
+        
+        if response == "cancel":
+            return
+        
+        deleted_count = 0
+        failed_files = []
+        
+        for file_path, file_name, tree_item in files_to_delete:
+            try:
+                if response == "permanent":
+                    # Delete file permanently
+                    os.remove(file_path)
+                    action_type = "permanent"
+                elif response == "trash":
+                    # Try to move to trash (Linux)
+                    try:
+                        # Try using gio trash command (GNOME)
+                        subprocess.run(['gio', 'trash', file_path], check=True)
+                        action_type = "trash"
+                    except:
+                        # Fallback to rename to .trash folder
+                        trash_dir = os.path.expanduser('~/.local/share/Trash/files')
+                        os.makedirs(trash_dir, exist_ok=True)
+                        trash_path = os.path.join(trash_dir, os.path.basename(file_path))
+                        counter = 1
+                        while os.path.exists(trash_path):
+                            name, ext = os.path.splitext(os.path.basename(file_path))
+                            trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
+                            counter += 1
+                        shutil.move(file_path, trash_path)
+                        action_type = "trash"
+                
+                # Update database - remove the file entry
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("DELETE FROM files WHERE path = ?", (file_path,))
+                conn.commit()
+                conn.close()
+                
+                # Remove from treeview
+                self.tree.delete(tree_item)
+                deleted_count += 1
+                
+            except PermissionError:
+                failed_files.append(f"{file_name} (Permission denied)")
+            except OSError as e:
+                failed_files.append(f"{file_name} ({str(e)})")
+            except Exception as e:
+                failed_files.append(f"{file_name} (Unexpected error)")
+        
+        # Update status
+        if deleted_count > 0:
+            action_text = "permanently deleted" if response == "permanent" else "moved to trash"
+            if failed_files:
+                self.status_var.set(f"{action_text.capitalize()} {deleted_count} files, failed: {len(failed_files)}")
+                messagebox.showwarning("Some Files Failed", 
+                                     f"Successfully {action_text} {deleted_count} files.\n\n"
+                                     f"Failed to delete {len(failed_files)} files:\n" +
+                                     "\n".join(failed_files[:10]))  # Show first 10 failures
+            else:
+                self.status_var.set(f"{action_text.capitalize()} {deleted_count} files")
+        else:
+            self.status_var.set("No files were deleted")
+            if failed_files:
+                messagebox.showerror("Delete Failed", 
+                                   f"Failed to delete all files:\n" +
+                                   "\n".join(failed_files[:10]))
+
+    def show_bulk_delete_confirmation(self, files_list):
+        """Show enhanced delete confirmation dialog for multiple files"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Confirm Bulk Delete")
+        dialog.geometry("600x400")
+        dialog.configure(bg='#0A0A0A')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Try to set opacity
+        try:
+            dialog.attributes('-alpha', 0.97)
+        except:
+            pass
+        
+        result = {"choice": "cancel"}
+        
+        def set_choice(choice):
+            result["choice"] = choice
+            dialog.destroy()
+        
+        # Title
+        tk.Label(dialog, text=f"Delete {len(files_list)} files?", 
+                font=('Monospace', self.font_size, 'bold'),
+                bg='#0A0A0A', fg='#FF5555').pack(pady=(20, 10))
+        
+        # File list in scrollable frame
+        list_frame = tk.Frame(dialog, bg='#0A0A0A')
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+        
+        scrollbar = Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        file_listbox = Listbox(list_frame, yscrollcommand=scrollbar.set,
+                              font=('Monospace', self.font_size-2), 
+                              bg='#0A0A0A', fg='#AAAAAA',
+                              selectbackground='#004400', selectforeground='#00FF00',
+                              height=8)
+        file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=file_listbox.yview)
+        
+        # Add files to listbox (show only first 50)
+        display_files = files_list[:50]
+        for file_path, file_name, _ in display_files:
+            file_listbox.insert(tk.END, f"• {file_name}")
+        
+        if len(files_list) > 50:
+            file_listbox.insert(tk.END, f"... and {len(files_list) - 50} more files")
+        
+        # Warning
+        tk.Label(dialog, text="This action cannot be undone!", 
+                font=('Monospace', self.font_size-2),
+                bg='#0A0A0A', fg='#FFAA00').pack(pady=(10, 15))
+        
+        # Button frame
+        btn_frame = tk.Frame(dialog, bg='#0A0A0A')
+        btn_frame.pack(pady=10)
+        
+        # Buttons
+        tk.Button(btn_frame, text="Move to Trash", 
+                 command=lambda: set_choice("trash"),
+                 font=('Monospace', self.font_size-2),
+                 bg='#0A0A0A', fg='#00FF00',
+                 activebackground='#003300', activeforeground='#00FF00',
+                 width=15).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(btn_frame, text="Delete Permanently", 
+                 command=lambda: set_choice("permanent"),
+                 font=('Monospace', self.font_size-2),
+                 bg='#0A0A0A', fg='#FF5555',
+                 activebackground='#330000', activeforeground='#FF5555',
+                 width=15).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(btn_frame, text="Cancel", 
+                 command=lambda: set_choice("cancel"),
+                 font=('Monospace', self.font_size-2),
+                 bg='#0A0A0A', fg='#AAAAAA',
+                 activebackground='#003300', activeforeground='#AAAAAA',
+                 width=10).pack(side=tk.LEFT, padx=5)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        self.root.wait_window(dialog)
+        return result["choice"]
 
     def sort_by_column(self, col):
         if self.sort_column == col:
@@ -646,8 +1189,11 @@ class EverythingApp:
     def show_selected_path(self, event=None):
         sel = self.tree.selection()
         if sel:
-            full_path = self.tree.item(sel[0])['values'][4]
-            self.status_var.set(f"Selected: {full_path}")
+            if len(sel) == 1:
+                full_path = self.tree.item(sel[0])['values'][4]
+                self.status_var.set(f"Selected: {full_path}")
+            else:
+                self.status_var.set(f"Selected {len(sel)} files")
 
     def clear_search(self, event=None):
         self.search_var.set("")
@@ -665,6 +1211,16 @@ class EverythingApp:
         if not sel:
             return
         
+        # NEW: If multiple files selected, do bulk rename?
+        if len(sel) > 1:
+            response = messagebox.askyesno("Multiple Files", 
+                                         f"You have {len(sel)} files selected.\n"
+                                         f"Do you want to rename them all with a pattern?")
+            if response:
+                self.bulk_rename_files(sel)
+            return
+        
+        # Original single file rename logic
         item = self.tree.item(sel[0])
         old_path = item['values'][4]
         old_name = item['values'][0]
@@ -743,51 +1299,146 @@ class EverythingApp:
         except Exception as e:
             messagebox.showerror("Rename Error", f"Unexpected error:\n{str(e)}")
 
+    def bulk_rename_files(self, selected_items):
+        """Bulk rename multiple files with pattern"""
+        # Simple pattern: name (1).ext, name (2).ext, etc.
+        base_name = simpledialog.askstring("Bulk Rename", 
+                                          f"Base name for {len(selected_items)} files:",
+                                          initialvalue="file",
+                                          parent=self.root)
+        if not base_name:
+            return
+        
+        renamed_count = 0
+        for i, item_id in enumerate(selected_items):
+            item = self.tree.item(item_id)
+            old_path = item['values'][4]
+            old_name = item['values'][0]
+            
+            if not os.path.exists(old_path):
+                continue
+            
+            # Create new name with pattern
+            name_part, ext = os.path.splitext(old_name)
+            new_name = f"{base_name} ({i+1}){ext}"
+            new_path = os.path.join(os.path.dirname(old_path), new_name)
+            
+            try:
+                os.rename(old_path, new_path)
+                
+                # Update database
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                stat = os.stat(new_path)
+                c.execute('''UPDATE files 
+                            SET path = ?, name = ?, size = ?, modified = ?, indexed_date = ?
+                            WHERE path = ?''',
+                         (new_path, new_name, stat.st_size, stat.st_mtime, 
+                          datetime.now().timestamp(), old_path))
+                conn.commit()
+                conn.close()
+                
+                renamed_count += 1
+            except Exception as e:
+                pass  # Silent fail for bulk operations
+        
+        # Refresh and show result
+        self.refresh_list(self.search_var.get().strip())
+        self.status_var.set(f"Bulk renamed {renamed_count} files")
+
     # ==================== COPY TO CLIPBOARD FUNCTIONS ====================
     def copy_selected_path(self, event=None):
-        """Copy selected file path to clipboard (Ctrl+C)"""
+        """Copy selected file path to clipboard (Ctrl+C) - NOW SUPPORTS MULTIPLE"""
         sel = self.tree.selection()
         if not sel:
             return
         
-        item = self.tree.item(sel[0])
-        full_path = item['values'][4]
-        
-        if copy_to_clipboard(full_path):
-            self.status_var.set(f"📋 Copied path to clipboard: {full_path}")
+        if len(sel) == 1:
+            # Single file - copy full path
+            item = self.tree.item(sel[0])
+            full_path = item['values'][4]
+            
+            if copy_to_clipboard(full_path):
+                self.status_var.set(f"📋 Copied path to clipboard: {full_path}")
+            else:
+                messagebox.showinfo("Copy Path", 
+                                   f"Path copied to clipboard:\n{full_path}")
         else:
-            messagebox.showinfo("Copy Path", 
-                               f"Path copied to clipboard:\n{full_path}")
+            # Multiple files - copy all paths separated by newlines
+            paths = []
+            for item_id in sel:
+                item = self.tree.item(item_id)
+                full_path = item['values'][4]
+                paths.append(full_path)
+            
+            clipboard_text = "\n".join(paths)
+            if copy_to_clipboard(clipboard_text):
+                self.status_var.set(f"📋 Copied {len(paths)} paths to clipboard")
+            else:
+                messagebox.showinfo("Copy Paths", 
+                                   f"Copied {len(paths)} paths to clipboard")
 
     def copy_filename_only(self):
-        """Copy only the filename (without path)"""
+        """Copy only the filename (without path) - NOW SUPPORTS MULTIPLE"""
         sel = self.tree.selection()
         if not sel:
             return
         
-        item = self.tree.item(sel[0])
-        filename = item['values'][0]
-        
-        if copy_to_clipboard(filename):
-            self.status_var.set(f"📋 Copied filename: {filename}")
+        if len(sel) == 1:
+            # Single file
+            item = self.tree.item(sel[0])
+            filename = item['values'][0]
+            
+            if copy_to_clipboard(filename):
+                self.status_var.set(f"📋 Copied filename: {filename}")
+            else:
+                messagebox.showinfo("Copy Filename", 
+                                   f"Filename copied to clipboard:\n{filename}")
         else:
-            messagebox.showinfo("Copy Filename", 
-                               f"Filename copied to clipboard:\n{filename}")
+            # Multiple files
+            filenames = []
+            for item_id in sel:
+                item = self.tree.item(item_id)
+                filename = item['values'][0]
+                filenames.append(filename)
+            
+            clipboard_text = "\n".join(filenames)
+            if copy_to_clipboard(clipboard_text):
+                self.status_var.set(f"📋 Copied {len(filenames)} filenames")
+            else:
+                messagebox.showinfo("Copy Filenames", 
+                                   f"Copied {len(filenames)} filenames to clipboard")
 
     def copy_file_path(self):
-        """Copy full file path"""
+        """Copy full file path - NOW SUPPORTS MULTIPLE"""
         sel = self.tree.selection()
         if not sel:
             return
         
-        item = self.tree.item(sel[0])
-        full_path = item['values'][4]
-        
-        if copy_to_clipboard(full_path):
-            self.status_var.set(f"📋 Copied path: {full_path}")
+        if len(sel) == 1:
+            # Single file
+            item = self.tree.item(sel[0])
+            full_path = item['values'][4]
+            
+            if copy_to_clipboard(full_path):
+                self.status_var.set(f"📋 Copied path: {full_path}")
+            else:
+                messagebox.showinfo("Copy Path", 
+                                   f"Path copied to clipboard:\n{full_path}")
         else:
-            messagebox.showinfo("Copy Path", 
-                               f"Path copied to clipboard:\n{full_path}")
+            # Multiple files
+            paths = []
+            for item_id in sel:
+                item = self.tree.item(item_id)
+                full_path = item['values'][4]
+                paths.append(full_path)
+            
+            clipboard_text = "\n".join(paths)
+            if copy_to_clipboard(clipboard_text):
+                self.status_var.set(f"📋 Copied {len(paths)} paths")
+            else:
+                messagebox.showinfo("Copy Paths", 
+                                   f"Copied {len(paths)} paths to clipboard")
 
     # ==================== FIXED EXPORT CSV FUNCTION ====================
     def export_csv(self):
@@ -831,185 +1482,6 @@ class EverythingApp:
                                "Make sure you have write permissions.")
         except Exception as e:
             messagebox.showerror("Export Error", f"Error exporting CSV:\n{str(e)}")
-
-    def delete_selected_file(self, event=None):
-        """Delete selected file with Delete key (permanently)"""
-        sel = self.tree.selection()
-        if not sel:
-            return
-        
-        item = self.tree.item(sel[0])
-        file_path = item['values'][4]
-        file_name = item['values'][0]
-        
-        if not os.path.exists(file_path):
-            messagebox.showerror("Error", f"File not found:\n{file_path}")
-            return
-        
-        # Confirm deletion with more options
-        response = self.show_delete_confirmation(file_name, file_path)
-        
-        if response == "cancel":
-            return
-        
-        try:
-            if response == "permanent":
-                # Delete file permanently
-                os.remove(file_path)
-                action = "Permanently deleted"
-            elif response == "trash":
-                # Try to move to trash
-                if sys.platform == "win32":
-                    # Windows: Use send2trash if available, otherwise delete
-                    try:
-                        import send2trash
-                        send2trash.send2trash(file_path)
-                        action = "Moved to Recycle Bin"
-                    except ImportError:
-                        # Create a custom trash folder for Windows
-                        trash_dir = os.path.join(APP_DATA_DIR, "Trash")
-                        os.makedirs(trash_dir, exist_ok=True)
-                        trash_path = os.path.join(trash_dir, os.path.basename(file_path))
-                        counter = 1
-                        while os.path.exists(trash_path):
-                            name, ext = os.path.splitext(os.path.basename(file_path))
-                            trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
-                            counter += 1
-                        shutil.move(file_path, trash_path)
-                        action = "Moved to trash"
-                elif sys.platform == "darwin":
-                    # macOS: Use AppleScript to move to trash
-                    try:
-                        import subprocess
-                        subprocess.run(['osascript', '-e', f'tell app "Finder" to delete POSIX file "{file_path}"'], check=True)
-                        action = "Moved to Trash"
-                    except:
-                        # Fallback for macOS
-                        trash_dir = os.path.expanduser('~/.Trash')
-                        os.makedirs(trash_dir, exist_ok=True)
-                        trash_path = os.path.join(trash_dir, os.path.basename(file_path))
-                        counter = 1
-                        while os.path.exists(trash_path):
-                            name, ext = os.path.splitext(os.path.basename(file_path))
-                            trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
-                            counter += 1
-                        shutil.move(file_path, trash_path)
-                        action = "Moved to trash"
-                else:
-                    # Linux: Try gio trash, then fallback
-                    try:
-                        subprocess.run(['gio', 'trash', file_path], check=True)
-                        action = "Moved to trash"
-                    except:
-                        # Fallback to rename to .trash folder
-                        trash_dir = os.path.expanduser('~/.local/share/Trash/files')
-                        os.makedirs(trash_dir, exist_ok=True)
-                        trash_path = os.path.join(trash_dir, os.path.basename(file_path))
-                        counter = 1
-                        while os.path.exists(trash_path):
-                            name, ext = os.path.splitext(os.path.basename(file_path))
-                            trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
-                            counter += 1
-                        shutil.move(file_path, trash_path)
-                        action = "Moved to trash"
-            
-            # Update database - remove the file entry
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("DELETE FROM files WHERE path = ?", (file_path,))
-            
-            # Also check if we need to update the folder's indexed_date
-            folder = os.path.dirname(file_path)
-            c.execute('''UPDATE folders SET excluded = excluded 
-                        WHERE path = ?''', (folder,))
-            
-            conn.commit()
-            conn.close()
-            
-            # Remove from treeview and refresh
-            self.tree.delete(sel[0])
-            self.status_var.set(f"{action}: {file_name}")
-            
-        except PermissionError:
-            messagebox.showerror("Permission Error", 
-                               f"Permission denied. Make sure you have write access to the file.")
-        except OSError as e:
-            messagebox.showerror("Delete Error", f"Could not delete file:\n{str(e)}")
-        except Exception as e:
-            messagebox.showerror("Delete Error", f"Unexpected error:\n{str(e)}")
-
-    def show_delete_confirmation(self, filename, filepath):
-        """Show enhanced delete confirmation dialog with options"""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Confirm Delete")
-        dialog.geometry("500x250")
-        dialog.configure(bg='#0A0A0A')
-        dialog.transient(self.root)
-        dialog.grab_set()
-        
-        # Try to set opacity
-        try:
-            dialog.attributes('-alpha', 0.97)
-        except:
-            pass
-        
-        result = {"choice": "cancel"}
-        
-        def set_choice(choice):
-            result["choice"] = choice
-            dialog.destroy()
-        
-        # Title
-        tk.Label(dialog, text=f"Delete '{filename}'?", 
-                font=('Monospace', self.font_size, 'bold'),
-                bg='#0A0A0A', fg='#FF5555').pack(pady=(20, 10))
-        
-        # File path
-        path_label = tk.Label(dialog, text=f"Path: {filepath}", 
-                             font=('Monospace', self.font_size-2),
-                             bg='#0A0A0A', fg='#AAAAAA',
-                             wraplength=450, justify='left')
-        path_label.pack(pady=(0, 20))
-        
-        # Warning
-        tk.Label(dialog, text="This action cannot be undone!", 
-                font=('Monospace', self.font_size-2),
-                bg='#0A0A0A', fg='#FFAA00').pack(pady=(0, 20))
-        
-        # Button frame
-        btn_frame = tk.Frame(dialog, bg='#0A0A0A')
-        btn_frame.pack(pady=10)
-        
-        # Buttons
-        tk.Button(btn_frame, text="Move to Trash", 
-                 command=lambda: set_choice("trash"),
-                 font=('Monospace', self.font_size-2),
-                 bg='#0A0A0A', fg='#00FF00',
-                 activebackground='#003300', activeforeground='#00FF00',
-                 width=15).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(btn_frame, text="Delete Permanently", 
-                 command=lambda: set_choice("permanent"),
-                 font=('Monospace', self.font_size-2),
-                 bg='#0A0A0A', fg='#FF5555',
-                 activebackground='#330000', activeforeground='#FF5555',
-                 width=15).pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(btn_frame, text="Cancel", 
-                 command=lambda: set_choice("cancel"),
-                 font=('Monospace', self.font_size-2),
-                 bg='#0A0A0A', fg='#AAAAAA',
-                 activebackground='#003300', activeforeground='#AAAAAA',
-                 width=10).pack(side=tk.LEFT, padx=5)
-        
-        # Center dialog
-        dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (dialog.winfo_width() // 2)
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (dialog.winfo_height() // 2)
-        dialog.geometry(f"+{x}+{y}")
-        
-        self.root.wait_window(dialog)
-        return result["choice"]
 
     def is_valid_filename(self, filename):
         """Check if filename is valid"""
@@ -1193,16 +1665,19 @@ class EverythingApp:
     def open_selected(self):
         sel = self.tree.selection()
         if sel:
-            full_path = self.tree.item(sel[0])['values'][4]
-            if full_path and os.path.exists(full_path):
-                os.system(f'xdg-open "{full_path}"')
-            else:
-                messagebox.showinfo("File Not Found",
-                                    f"File not found: {full_path}")
+            # Open all selected files
+            for item_id in sel:
+                full_path = self.tree.item(item_id)['values'][4]
+                if full_path and os.path.exists(full_path):
+                    os.system(f'xdg-open "{full_path}"')
+                else:
+                    messagebox.showinfo("File Not Found",
+                                        f"File not found: {full_path}")
+                    break  # Stop on first error
 
     # ==================== ENHANCED CONTEXT MENU ====================
     def show_context_menu(self, event):
-        """Show enhanced context menu with copy/cut options"""
+        """Show enhanced context menu with copy/cut options - NOW WITH OPEN CONTAINING FOLDER"""
         sel = self.tree.selection()
         if not sel:
             return
@@ -1213,6 +1688,10 @@ class EverythingApp:
                    activebackground='#003300', activeforeground='#00FF00')
         
         menu.add_command(label="Open", command=self.open_selected)
+        menu.add_separator()
+        
+        # NEW: Open Containing Folder option
+        menu.add_command(label="Open Containing Folder", command=self.open_containing_folder)
         menu.add_separator()
         
         # Copy options
@@ -1247,92 +1726,28 @@ class EverythingApp:
         menu.tk_popup(event.x_root, event.y_root)
 
     def cut_to_trash(self):
-        """Cut file (copy path to clipboard, then move to trash)"""
+        """Cut file (copy path to clipboard, then move to trash) - NOW SUPPORTS MULTIPLE"""
         sel = self.tree.selection()
         if not sel:
             return
         
-        item = self.tree.item(sel[0])
-        file_path = item['values'][4]
-        file_name = item['values'][0]
+        # First copy all paths to clipboard
+        paths = []
+        for item_id in sel:
+            item = self.tree.item(item_id)
+            file_path = item['values'][4]
+            paths.append(file_path)
         
-        # First copy the path to clipboard
-        copy_to_clipboard(file_path)
+        clipboard_text = "\n".join(paths)
+        copy_to_clipboard(clipboard_text)
         
-        # Then move to trash
-        if not os.path.exists(file_path):
-            messagebox.showerror("Error", f"File not found:\n{file_path}")
-            return
-        
-        response = messagebox.askyesno("Cut to Trash", 
-                                      f"Cut '{file_name}'?\n\n"
-                                      f"Path copied to clipboard.\n"
-                                      f"File will be moved to trash.")
-        
-        if not response:
-            return
-        
-        try:
-            # Platform-specific trash handling
-            if sys.platform == "win32":
-                try:
-                    import send2trash
-                    send2trash.send2trash(file_path)
-                except ImportError:
-                    trash_dir = os.path.join(APP_DATA_DIR, "Trash")
-                    os.makedirs(trash_dir, exist_ok=True)
-                    trash_path = os.path.join(trash_dir, os.path.basename(file_path))
-                    counter = 1
-                    while os.path.exists(trash_path):
-                        name, ext = os.path.splitext(os.path.basename(file_path))
-                        trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
-                        counter += 1
-                    shutil.move(file_path, trash_path)
-            elif sys.platform == "darwin":
-                try:
-                    subprocess.run(['osascript', '-e', f'tell app "Finder" to delete POSIX file "{file_path}"'], check=True)
-                except:
-                    trash_dir = os.path.expanduser('~/.Trash')
-                    os.makedirs(trash_dir, exist_ok=True)
-                    trash_path = os.path.join(trash_dir, os.path.basename(file_path))
-                    counter = 1
-                    while os.path.exists(trash_path):
-                        name, ext = os.path.splitext(os.path.basename(file_path))
-                        trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
-                        counter += 1
-                    shutil.move(file_path, trash_path)
-            else:
-                # Linux
-                try:
-                    subprocess.run(['gio', 'trash', file_path], check=True)
-                except:
-                    trash_dir = os.path.expanduser('~/.local/share/Trash/files')
-                    os.makedirs(trash_dir, exist_ok=True)
-                    trash_path = os.path.join(trash_dir, os.path.basename(file_path))
-                    counter = 1
-                    while os.path.exists(trash_path):
-                        name, ext = os.path.splitext(os.path.basename(file_path))
-                        trash_path = os.path.join(trash_dir, f"{name} ({counter}){ext}")
-                        counter += 1
-                    shutil.move(file_path, trash_path)
-            
-            # Update database - remove the file entry
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("DELETE FROM files WHERE path = ?", (file_path,))
-            conn.commit()
-            conn.close()
-            
-            # Remove from treeview
-            self.tree.delete(sel[0])
-            self.status_var.set(f"Cut to trash: {file_name}")
-            
-        except Exception as e:
-            messagebox.showerror("Cut Error", f"Could not move to trash:\n{str(e)}")
+        # Then delete all files
+        self.delete_selected_file()
 
     def rescan_folder(self):
         sel = self.tree.selection()
         if sel:
+            # Use first selected item to get folder
             full_path = self.tree.item(sel[0])['values'][4]
             if full_path:
                 folder = os.path.dirname(full_path)
