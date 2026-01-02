@@ -17,7 +17,7 @@
 - **Ctrl+R**: Rename
 - **Ctrl+F**: Focus search box
 - **F5**: Refresh
-- **Esc**: Clear sear
+- **Esc**: Clear search
 
 
 ## Features
